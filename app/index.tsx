@@ -1,4 +1,5 @@
-import { ActivityIndicator, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StatusBar, StyleSheet, Text, View, Pressable } from 'react-native';
+import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen() {
@@ -22,6 +23,7 @@ export default function HomeScreen() {
           <Text accessibilityLabel="App loading status" style={styles.loadingText}>
             Loading your trips
           </Text>
+        <Link href="/sign-in" asChild><Pressable accessibilityRole="button" style={styles.signInButton}><Text style={styles.signInText}>Sign in</Text></Pressable></Link>
         </View>
       </View>
       <Text style={styles.footer}>PACK LIGHT. GO FAR.</Text>
@@ -98,6 +100,8 @@ const styles = StyleSheet.create({
     color: '#52636A',
     fontSize: 15,
   },
+  signInButton: { minHeight: 44, minWidth: 120, marginTop: 8, borderRadius: 12, backgroundColor: '#1F5A43', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+  signInText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   footer: {
     alignSelf: 'center',
     color: '#78837F',
