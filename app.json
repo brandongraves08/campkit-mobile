@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "CampKit",
+    "slug": "campkit-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "com.graveystudios.campkit",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.graveystudios.campkit"
+    },
+    "android": {
+      "package": "com.graveystudios.campkit"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ]
+    ]
+  }
+}
