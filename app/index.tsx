@@ -1,9 +1,10 @@
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" />
       <View style={styles.content}>
         <View style={styles.brandMark} accessibilityElementsHidden>
           <Text style={styles.brandMarkText}>C</Text>
@@ -17,7 +18,7 @@ export default function HomeScreen() {
               Signed out
             </Text>
           </View>
-          <ActivityIndicator color="#1F5A43" size="small" />
+          <ActivityIndicator color="#1F5A43" size="large" />
           <Text accessibilityLabel="App loading status" style={styles.loadingText}>
             Loading your trips
           </Text>
