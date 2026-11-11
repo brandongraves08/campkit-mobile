@@ -1,19 +1,26 @@
-declare const require: (name: string) => { readFileSync(path: string, encoding: string): string; resolve(...parts: string[]): string };
+declare const require: (name: string) => any;
 declare const __dirname: string;
-const { readFileSync } = require('fs');
-const { resolve } = require('path');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 import { expect, it, jest } from '@jest/globals';
 import { AuthClient } from '../auth-client';
 import { SecureStorage, TokenStore } from '../token-store';
 import { AUTH_REDIRECT_URI } from '../redirect';
 
-const repoRoot = resolve(__dirname, '../../..');
+const repoRoot = path.resolve(__dirname, '../../..');
+
 const productionFiles = [
   'src/auth/auth-client.ts',
   'src/auth/token-store.ts',
   'src/auth/session-context.tsx',
   'src/api/http.ts',
 ];
+// The test sources that exercise real access/refresh token values. A snapshot
+// assertion here would serialize a live token into a checked-in `.snap` file.
+const tokenTestSources = ['src/auth/__tests__/auth-client.test.ts', 'src/auth/__tests__/token-store.test.ts'];
+const snapshotRoots = ['src', 'app'];
+
 const forbiddenSinkPatterns = [
   /@react-native-async-storage\/async-storage|\bAsyncStorage\b/i,
   /expo-sqlite|\bSQLite\b|\bopenDatabase\b/i,
@@ -21,8 +28,28 @@ const forbiddenSinkPatterns = [
   /\.(?:toMatchSnapshot|toMatchInlineSnapshot)\s*\(/,
 ];
 
+const snapshotApiPattern = /\.(?:toMatchSnapshot|toMatchInlineSnapshot)\s*\(/;
+const tokenLiteralPattern = /["']?(?:accessToken|refreshToken|access_token|refresh_token)["']?\s*[:=]\s*["'][^"']{8,}["']/i;
+
 function expectNoForbiddenTokenSinks(source: string) {
   for (const pattern of forbiddenSinkPatterns) expect(source).not.toMatch(pattern);
+}
+
+function listFiles(directory: string, accept: (name: string) => boolean): string[] {
+  if (!fs.existsSync(directory)) return [];
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry: any) => {
+    const fullPath = path.resolve(directory, entry.name);
+    if (entry.isDirectory()) return listFiles(fullPath, accept);
+    return entry.isFile() && accept(entry.name) ? [fullPath] : [];
+  });
+}
+
+function findSnapshotApiUses(sources: Array<{ file: string; source: string }>): string[] {
+  return sources.filter(({ source }) => snapshotApiPattern.test(source)).map(({ file }) => file);
+}
+
+function findTokenSnapshotArtifacts(files: string[]): string[] {
+  return files.filter((file) => tokenLiteralPattern.test(fs.readFileSync(file, 'utf8')));
 }
 
 it('rejects representative AsyncStorage, local-database, logging, and snapshot leakage code', () => {
@@ -87,7 +114,37 @@ it('keeps the real auth/token path on SecureStore, emits no token logs, and sani
 
 it('keeps token-handling production modules free of prohibited persistence/log/snapshot sinks', () => {
   for (const file of productionFiles) {
-    const source = readFileSync(resolve(repoRoot, file), 'utf8');
-    expectNoForbiddenTokenSinks(source);
+    expectNoForbiddenTokenSinks(fs.readFileSync(path.resolve(repoRoot, file), 'utf8'));
+  }
+});
+
+it('flags a token-bearing snapshot assertion added to the real auth/token test sources', () => {
+  const sources = tokenTestSources.map((file) => ({
+    file,
+    source: fs.readFileSync(path.resolve(repoRoot, file), 'utf8'),
+  }));
+  expect(findSnapshotApiUses(sources)).toEqual([]);
+
+  const mutant = sources.map(({ file, source }) =>
+    file === 'src/auth/__tests__/auth-client.test.ts'
+      ? { file, source: `${source}\nit('leak', () => expect(session).toMatchSnapshot());\n` }
+      : { file, source },
+  );
+  expect(findSnapshotApiUses(mutant)).toEqual(['src/auth/__tests__/auth-client.test.ts']);
+});
+
+it('flags a token-bearing snapshot artifact under the app source trees', () => {
+  const snapshotFiles = snapshotRoots.flatMap((directory) =>
+    listFiles(path.resolve(repoRoot, directory), (name: string) => name.endsWith('.snap')),
+  );
+  expect(findTokenSnapshotArtifacts(snapshotFiles)).toEqual([]);
+
+  const mutantDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'campkit-snapshot-guard-'));
+  const mutantFile = path.join(mutantDirectory, 'auth-client.test.ts.snap');
+  fs.writeFileSync(mutantFile, 'exports[`session`] = `\n{"accessToken": "sentinel-access-token-leak"}\n`;\n');
+  try {
+    expect(findTokenSnapshotArtifacts([...snapshotFiles, mutantFile])).toEqual([mutantFile]);
+  } finally {
+    fs.rmSync(mutantDirectory, { recursive: true, force: true });
   }
 });
