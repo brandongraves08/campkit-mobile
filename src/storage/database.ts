@@ -209,7 +209,12 @@ export async function clearAccountDatabase(memberId: string): Promise<void> {
   const databaseName = accountDatabaseName(memberId);
   const key = await SecureStore.getItemAsync(accountKeyName(memberId));
   const marker = await SecureStore.getItemAsync(accountMarkerName(memberId));
-  if (key === null && marker === null) return;
+  if (key === null && marker === null) {
+    // SecureStore state may be lost while an encrypted database file remains.
+    // No key means rows cannot be read safely, but deleting the orphaned file is safe.
+    await SQLite.deleteDatabaseAsync(databaseName);
+    return;
+  }
 
   if (key !== null && STORED_KEY.test(key)) {
     const encryptionPragma = keyPragma(key);

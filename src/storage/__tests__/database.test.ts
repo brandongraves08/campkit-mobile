@@ -271,8 +271,23 @@ describe('clearAccountDatabase', () => {
     await expect(clearAccountDatabase(MEMBER)).resolves.toBeUndefined();
 
     expect(sqlite.openDatabaseAsync).not.toHaveBeenCalled();
-    expect(sqlite.deleteDatabaseAsync).not.toHaveBeenCalled();
+    // Deleting a missing database is harmless and keeps orphan cleanup idempotent.
+    expect(sqlite.deleteDatabaseAsync).toHaveBeenCalledTimes(2);
+    expect(sqlite.deleteDatabaseAsync).toHaveBeenCalledWith(DATABASE_NAME);
     expect(values.size).toBe(0);
+  });
+
+  it('deletes an orphaned encrypted database when both SecureStore entries are missing', async () => {
+    createSecureStore();
+    // The file may outlive both SecureStore entries, for example after key loss.
+
+    await expect(clearAccountDatabase(MEMBER)).resolves.toBeUndefined();
+    await expect(clearAccountDatabase(MEMBER)).resolves.toBeUndefined();
+
+    expect(sqlite.openDatabaseAsync).not.toHaveBeenCalled();
+    expect(sqlite.deleteDatabaseAsync).toHaveBeenCalledTimes(2);
+    expect(sqlite.deleteDatabaseAsync).toHaveBeenNthCalledWith(1, DATABASE_NAME);
+    expect(sqlite.deleteDatabaseAsync).toHaveBeenNthCalledWith(2, DATABASE_NAME);
   });
 
   it('fails closed and retains the key when account rows cannot be cleared', async () => {
