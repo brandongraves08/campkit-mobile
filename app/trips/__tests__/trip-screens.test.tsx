@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import TripsScreen from '../index';
 import TripScreen from '../[tripId]';
+import { PackingRow } from '../../../src/components/PackingRow';
 import { useTrips } from '../../../src/trips/trips-context';
 
 jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useLocalSearchParams: () => ({ tripId: '22222222-2222-4222-8222-222222222222' }) }));
@@ -88,9 +89,20 @@ describe('trip screens', () => {
     expect(getPackingSnapshot).toHaveBeenCalledWith(tripId);
   });
 
+  it('exposes packed state as a native switch and a visible text label', async () => {
+    const row = downloaded.packing[0];
+    const { rerender } = await render(<PackingRow row={row} onChange={() => {}} />);
+    expect(screen.getByRole('switch', { name: 'Synthetic stove', checked: false })).toBeTruthy();
+    expect(screen.getByText('Not packed')).toBeTruthy();
+
+    await rerender(<PackingRow row={{ ...row, packed: true }} onChange={() => {}} />);
+    expect(screen.getByRole('switch', { name: 'Synthetic stove', checked: true })).toBeTruthy();
+    expect(screen.getByText('Packed')).toBeTruthy();
+  });
+
   it('allows packed-state changes only through the downloaded snapshot', async () => {
     await render(<TripScreen />);
-    const checkbox = await screen.findByRole('checkbox', { name: /Synthetic stove/i });
+    const checkbox = await screen.findByRole('switch', { name: /Synthetic stove/i });
     await act(async () => { fireEvent(checkbox, 'valueChange', true); });
     expect(setPacked).toHaveBeenCalledWith(tripId, '12', true);
   });
