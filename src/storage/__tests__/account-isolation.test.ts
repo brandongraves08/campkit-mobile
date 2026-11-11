@@ -390,6 +390,23 @@ describe('storage isolation guards', () => {
 });
 
 describe('clearing without a key', () => {
+  it('removes an orphaned database file when both SecureStore entries are missing', async () => {
+    const database = await openAccountDatabase(MEMBER_A, HOUSEHOLD_A);
+    await new TripsRepository(database).saveSnapshot(snapshot());
+    await database.close();
+
+    const databasePath = path.join(directory, `campkit-${MEMBER_A}.db`);
+    expect(fs.existsSync(databasePath)).toBe(true);
+    secureValues.delete(`campkit.db-key.v1.${MEMBER_A}`);
+    secureValues.delete(`campkit.db-state.v1.${MEMBER_A}`);
+
+    await clearAccountDatabase(MEMBER_A);
+    expect(fs.existsSync(databasePath)).toBe(false);
+
+    await expect(clearAccountDatabase(MEMBER_A)).resolves.toBeUndefined();
+    expect(fs.existsSync(databasePath)).toBe(false);
+  });
+
   it('removes the encrypted file even when only the marker survived', async () => {
     const database = await openAccountDatabase(MEMBER_A, HOUSEHOLD_A);
     await new TripsRepository(database).saveSnapshot(snapshot());
