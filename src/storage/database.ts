@@ -48,6 +48,13 @@ export function assertUuid(value: string, label: string): void {
   }
 }
 
+/** Backend TripGear IDs are positive integer keys; retain UUID support for legacy rows. */
+export function assertPackingEntryId(value: string, label = 'packing entry'): void {
+  if (typeof value !== 'string' || (!UUID.test(value) && (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))))) {
+    throw new Error(`Invalid ${label} ID for account storage`);
+  }
+}
+
 export function accountDatabaseName(memberId: string): string {
   assertMemberId(memberId);
   return `campkit-${memberId}.db`;

@@ -1,4 +1,4 @@
-import { assertUuid, CampKitDatabase } from './database';
+import { assertPackingEntryId, assertUuid, CampKitDatabase } from './database';
 
 export interface PackingRowSnapshot {
   entryId: string;
@@ -81,7 +81,7 @@ function assertQuantity(value: unknown): number | null {
 }
 
 function assertPackingRow(row: PackingRowSnapshot): PackingRowSnapshot {
-  assertUuid(row.entryId, 'packing entry');
+  assertPackingEntryId(row.entryId);
   return {
     entryId: row.entryId,
     label: assertText(row.label, 'label'),
@@ -205,6 +205,21 @@ export class TripsRepository {
       downloadedAt: trip.downloaded_at,
       version: trip.version,
     }));
+  }
+
+  /** Edits only an already-downloaded row, scoped to this member and household. */
+  async setPacked(tripId: string, entryId: string, packed: boolean): Promise<void> {
+    assertUuid(tripId, 'trip');
+    assertPackingEntryId(entryId);
+    if (typeof packed !== 'boolean') throw new Error('Invalid packed state for stored trip');
+    const result = await this.database.run(
+      `UPDATE packing_entries SET packed = ?
+       WHERE member_id = ? AND household_id = ? AND trip_id = ? AND entry_id = ?
+       AND EXISTS (SELECT 1 FROM trips WHERE member_id = ? AND household_id = ? AND trip_id = ?)`,
+      [packed ? 1 : 0, this.database.memberId, this.database.householdId, tripId, entryId,
+        this.database.memberId, this.database.householdId, tripId],
+    );
+    if (result.changes === 0) throw new Error('Packing row is not available in a downloaded trip');
   }
 
   async deleteSnapshot(tripId: string): Promise<boolean> {

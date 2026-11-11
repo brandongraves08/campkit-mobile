@@ -143,6 +143,16 @@ describe('trip snapshots', () => {
     ]);
   });
 
+  it('persists backend integer packing IDs and edits only rows in a downloaded trip', async () => {
+    const database = await openAccountDatabase(MEMBER_A, HOUSEHOLD_A);
+    const trips = new TripsRepository(database);
+    await trips.saveSnapshot(snapshot({ packing: [{ entryId: '12', label: 'Synthetic stove', quantity: 1, packed: false, version: 3 }] }));
+    await expect(trips.setPacked(TRIP, '12', true)).resolves.toBeUndefined();
+    expect((await trips.getSnapshot(TRIP))?.packing).toEqual([{ entryId: '12', label: 'Synthetic stove', quantity: 1, packed: true, version: 3 }]);
+    await expect(trips.setPacked(TRIP_B, '12', false)).rejects.toThrow(/downloaded trip/i);
+    await expect(trips.setPacked(TRIP, '0', false)).rejects.toThrow(/entry/i);
+  });
+
   it('replaces a snapshot atomically and drops packing rows that no longer exist', async () => {
     const database = await openAccountDatabase(MEMBER_A, HOUSEHOLD_A);
     const trips = new TripsRepository(database);

@@ -48,6 +48,23 @@ export class ApiClient {
     if (!Array.isArray(body.households) || body.households.some((h) => !h || typeof h !== 'object' || !UUID.test(String((h as Household).id)) || typeof (h as Household).name !== 'string')) throw new Error('Invalid household response');
     return body.households as Household[];
   }
+  async listTrips(): Promise<unknown[]> {
+    const householdId = await this.selectedHousehold();
+    if (!householdId || !UUID.test(householdId)) throw new Error('Select a household before listing trips');
+    const response = await this.request(`/households/${householdId}/trips/`);
+    const body = await response.json() as { trips?: unknown };
+    if (!Array.isArray(body.trips)) throw new Error('Invalid trip list response');
+    return body.trips;
+  }
+  async getPackingSnapshot(tripId: string): Promise<{ trip: { id: string; name: string }; packing: { id: number; packed: boolean; quantity: number; version: number; gear: { id: string; name: string; category: string } }[] }> {
+    const householdId = await this.selectedHousehold();
+    if (!householdId || !UUID.test(householdId)) throw new Error('Select a household before downloading a trip');
+    if (!UUID.test(tripId)) throw new Error('Invalid trip ID');
+    const response = await this.request(`/households/${householdId}/trips/${tripId}/packing/`);
+    const body = await response.json() as { trip?: unknown; packing?: unknown };
+    if (!body.trip || typeof body.trip !== 'object' || !Array.isArray(body.packing)) throw new Error('Invalid packing snapshot response');
+    return body as { trip: { id: string; name: string }; packing: { id: number; packed: boolean; quantity: number; version: number; gear: { id: string; name: string; category: string } }[] };
+  }
   async selectHousehold(id: string): Promise<void> {
     if (!UUID.test(id)) throw new Error('Invalid household ID');
     const session = await this.sessionStore.load();

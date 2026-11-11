@@ -1,4 +1,4 @@
-import { assertUuid, CampKitDatabase } from './database';
+import { assertPackingEntryId, assertUuid, CampKitDatabase } from './database';
 
 export const OPERATION_STATUSES = ['pending', 'conflict', 'needs_attention'] as const;
 export type OperationStatus = (typeof OPERATION_STATUSES)[number];
@@ -83,7 +83,7 @@ export class OperationsRepository {
   async enqueue(operation: NewOperation): Promise<PendingOperation> {
     assertUuid(operation.id, 'operation');
     assertUuid(operation.tripId, 'trip');
-    assertUuid(operation.entryId, 'packing entry');
+    assertPackingEntryId(operation.entryId);
     const packed = assertPacked(operation.packed);
     const baseVersion = assertBaseVersion(operation.baseVersion);
     const { memberId, householdId } = this.database;

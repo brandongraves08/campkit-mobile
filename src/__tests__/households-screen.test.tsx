@@ -30,6 +30,14 @@ describe('household selection screen states', () => {
     expect(await screen.findByText('No households are available for this account.')).toBeTruthy();
   });
 
+  it('opens Trips after a household is selected', async () => {
+    listHouseholds.mockResolvedValue([{ id: '11111111-1111-4111-8111-111111111111', name: 'Synthetic household' }]);
+    await render(<HouseholdsScreen />);
+    await act(async () => { fireEvent.press(await screen.findByRole('button', { name: 'Synthetic household' })); });
+    expect(selectHousehold).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
+    expect(require('expo-router').router.replace).toHaveBeenCalledWith('/trips');
+  });
+
   it('shows an accessible load failure and retries to the empty state', async () => {
     listHouseholds.mockRejectedValueOnce(new Error('network unavailable')).mockResolvedValueOnce([]);
     await render(<HouseholdsScreen />);

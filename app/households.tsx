@@ -16,7 +16,7 @@ export default function HouseholdsScreen() {
     finally { setLoading(false); }
   }, [listHouseholds, selectedHousehold]);
   useEffect(() => { if (!session) router.replace('/sign-in'); else void load(); }, [session, load]);
-  async function choose(h: Household) { await selectHousehold(h.id); setSelected(h.id); }
+  async function choose(h: Household) { await selectHousehold(h.id); setSelected(h.id); router.replace('/trips'); }
   async function exit() { try { await signOut(); router.replace('/'); } catch { /* Keep the protected account screen open until secure data is cleared. */ } }
   return <SafeAreaView style={styles.page}><View style={styles.header}><Text style={styles.brand}>CampKit</Text><Pressable accessibilityRole="button" onPress={() => void exit()}><Text style={styles.signout}>Sign out</Text></Pressable></View>
     <Text style={styles.title}>Choose a household</Text><Text style={styles.subtitle}>Trips and packing lists available to your member account.</Text>

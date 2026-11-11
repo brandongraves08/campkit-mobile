@@ -3,6 +3,7 @@ import { AuthClient, MemberSession } from './auth-client';
 import { ApiClient, Household } from '../api/http';
 import { TokenStore } from './token-store';
 import * as SecureStore from 'expo-secure-store';
+import { clearTripsForSignOut } from '../trips/trips-service';
 
 interface SessionContextValue {
   session: MemberSession | null; api: ApiClient; error: string | null;
@@ -27,7 +28,7 @@ export function SessionProvider({ children }: React.PropsWithChildren) {
     },
     async signOut() {
       const active = session ?? await sessionStore.load();
-      try { if (active) await api.clearHouseholdSelection(active.memberId); await auth.signOut(); setSession(null); setError(null); }
+      try { if (active) { await clearTripsForSignOut(active.memberId); await api.clearHouseholdSelection(active.memberId); } await auth.signOut(); setSession(null); setError(null); }
       catch { setError('Unable to clear secure sign-in data.'); throw new Error('Unable to clear secure sign-in data'); }
     },
     listHouseholds: () => api.listHouseholds(),
