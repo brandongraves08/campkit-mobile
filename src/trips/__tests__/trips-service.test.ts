@@ -26,6 +26,20 @@ describe('TripsService', () => {
     await expect(service.refreshTrips()).resolves.toEqual([{ tripId, name: trip.name, destination: trip.destination, startsOn: trip.start_date, endsOn: trip.end_date, status: 'planned' }]);
     expect(api.listTrips).toHaveBeenCalledTimes(1);
   });
+  it('preserves gear.category as intentionally free text, including backend-defined labels', async () => {
+    const { service, api, repository } = setup();
+    api.getPackingSnapshot.mockResolvedValueOnce({ ...snapshot, packing: [{ ...snapshot.packing[0], gear: { ...snapshot.packing[0].gear, category: 'Locally defined / seasonal' } }] });
+    await service.downloadTrip(tripId);
+    expect(repository.saveSnapshot).toHaveBeenCalledWith(expect.objectContaining({ packing: [{ entryId, label: 'Synthetic stove', quantity: 1, packed: false, version: 3 }] }));
+  });
+
+  it('rejects a non-text gear.category before writing a downloaded snapshot', async () => {
+    const { service, api, repository } = setup();
+    api.getPackingSnapshot.mockResolvedValueOnce({ ...snapshot, packing: [{ ...snapshot.packing[0], gear: { ...snapshot.packing[0].gear, category: null } }] });
+    await expect(service.downloadTrip(tripId)).rejects.toThrow(/packing snapshot row/i);
+    expect(repository.saveSnapshot).not.toHaveBeenCalled();
+  });
+
   it('marks a trip downloaded only after the complete server snapshot is persisted', async () => {
     const { service, api, repository } = setup();
     await expect(service.downloadTrip(tripId)).resolves.toEqual(stored);

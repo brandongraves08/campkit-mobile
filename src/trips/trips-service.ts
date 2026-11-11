@@ -7,9 +7,11 @@ export type TripStatus = (typeof TRIP_STATUSES)[number];
 export interface TripSummary {
   tripId: string; name: string; destination: string | null; startsOn: string | null; endsOn: string | null; status: TripStatus;
 }
+/** Backend-defined classification label; intentionally free text (not a mobile-owned enum). */
+export type GearCategory = string;
 export interface PackingSnapshotResponse {
   trip: { id: string; name: string };
-  packing: { id: number; packed: boolean; quantity: number; version: number; gear: { id: string; name: string; category: string } }[];
+  packing: { id: number; packed: boolean; quantity: number; version: number; gear: { id: string; name: string; category: GearCategory } }[];
 }
 interface TripsApi {
   listTrips(): Promise<unknown[]>;
