@@ -68,8 +68,9 @@ export class SyncEngine {
           const code = errorCode(error);
           if (code && AUTH.has(code)) { summary.paused = true; return summary; }
           if (code === CONFLICT) {
-            const conflict = error as { packed?: unknown; version?: unknown };
-            if (typeof conflict.packed === 'boolean' && Number.isInteger(conflict.version) && (conflict.version as number) >= 1) await this.options.trips.updatePacking(op.tripId, op.entryId, conflict.packed, conflict.version as number);
+            const errorObject = error as { details?: unknown; packed?: unknown; version?: unknown };
+            const details = errorObject.details && typeof errorObject.details === 'object' ? errorObject.details as { packed?: unknown; version?: unknown } : errorObject;
+            if (typeof details.packed === 'boolean' && Number.isInteger(details.version) && (details.version as number) >= 1) await this.options.trips.updatePacking(op.tripId, op.entryId, details.packed, details.version as number);
             await this.options.operations.updateStatus(op.id, 'conflict', code); summary.conflicts++; done = true;
           }
           else if (code && ATTENTION.has(code)) { await this.options.operations.updateStatus(op.id, 'needs_attention', code); summary.needsAttention++; done = true; }

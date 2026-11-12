@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { SyncEngine } from '../sync-engine';
 import { OperationErrorCode, PendingOperation } from '../../storage/operations-repository';
+import { ApiClient } from '../../api/http';
 
 const op = (overrides: Partial<PendingOperation> = {}): PendingOperation => ({
   id: '55555555-5555-4555-8555-555555555555', memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111',
@@ -8,7 +9,7 @@ const op = (overrides: Partial<PendingOperation> = {}): PendingOperation => ({
   status: 'pending', createdAt: '2026-01-01T00:00:00.000Z', errorCode: null, ...overrides,
 });
 
-function setup(initial: PendingOperation[] = []) {
+function setup(initial: PendingOperation[] = [], id: () => string = () => op().id) {
   let queue = [...initial];
   const operations = {
     enqueue: jest.fn(async (input: PendingOperation) => { queue.push(input); return input; }),
@@ -17,12 +18,13 @@ function setup(initial: PendingOperation[] = []) {
     updateStatus: jest.fn(async (id: string, status: PendingOperation['status'], errorCode: OperationErrorCode | null = null) => { queue = queue.map((item) => item.id === id ? { ...item, status, errorCode } : item); }),
     remove: jest.fn(async (id: string) => { queue = queue.filter((item) => item.id !== id); return true; }),
   };
+  let serverRow = { entryId: '12', packed: false, version: 3 };
   const trips = {
-    getSnapshot: jest.fn(async () => ({ packing: [{ entryId: '12', packed: false, version: 3 }] })),
-    setPacked: jest.fn(async (_tripId: string, _entryId: string, _packed: boolean) => {}), updatePacking: jest.fn(async (_tripId: string, _entryId: string, _packed: boolean, _version: number) => {}),
+    getSnapshot: jest.fn(async () => ({ packing: [serverRow] })),
+    setPacked: jest.fn(async (_tripId: string, _entryId: string, _packed: boolean) => {}), updatePacking: jest.fn(async (_tripId: string, entryId: string, packed: boolean, version: number) => { serverRow = { entryId, packed, version }; }),
   };
   const transport = jest.fn<(item: PendingOperation) => Promise<{ entryId: string; packed: boolean; version: number; clientOperationId: string }>>(async (item: PendingOperation) => ({ entryId: item.entryId, packed: item.packed, version: item.baseVersion + 1, clientOperationId: item.id }));
-  const engine = new SyncEngine({ memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', operations: operations as never, trips: trips as never, transport, id: () => op().id, now: () => new Date('2026-01-02T00:00:00.000Z'), sleep: async () => {}, maxAttempts: 3 });
+  const engine = new SyncEngine({ memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', operations: operations as never, trips: trips as never, transport, id, now: () => new Date('2026-01-02T00:00:00.000Z'), sleep: async () => {}, maxAttempts: 3 });
   return { engine, operations, trips, transport, getQueue: () => queue };
 }
 
@@ -78,6 +80,28 @@ describe('durable desired-state sync engine', () => {
     expect(transport).toHaveBeenCalledTimes(1);
     expect(getQueue()[0]).toMatchObject({ status: 'conflict', errorCode: 'version_conflict' });
     expect(trips.updatePacking).toHaveBeenCalledWith(op().tripId, op().entryId, false, 7);
+  });
+
+  it('reconciles the real HTTP version-conflict envelope and applies local intent at its current version', async () => {
+    const freshId = '66666666-6666-4666-8666-666666666666';
+    const { engine, operations, trips, transport, getQueue } = setup([op()], () => freshId);
+    const sessionStore = { load: async () => ({ memberId: 'member-a', accessToken: 'token', refreshToken: 'refresh', expiresAt: 0 }), save: async () => {}, clear: async () => {} };
+    const selectionValues = new Map<string, string>();
+    const selectionStore = { getItemAsync: async (key: string) => selectionValues.get(key) ?? null, setItemAsync: async (key: string, value: string) => { selectionValues.set(key, value); }, deleteItemAsync: async (key: string) => { selectionValues.delete(key); } };
+    const fetcher = jest.fn<typeof fetch>().mockResolvedValue({ status: 409, ok: false, json: async () => ({ error: { code: 'version_conflict', message: 'Version conflict', packed: false, version: 7 } }) } as Response);
+    const api = new ApiClient({ baseUrl: 'https://campkit.lan', sessionStore, selectionStore, fetcher: fetcher as typeof fetch, refresh: async () => { throw new Error('not used'); } });
+    await api.selectHousehold(op().householdId);
+    transport.mockImplementation((item) => api.setPackedState(item.tripId, item.entryId, { packed: item.packed, baseVersion: item.baseVersion, clientOperationId: item.id }));
+
+    const summary = await engine.syncPendingOperations();
+    expect(summary).toMatchObject({ conflicts: 1, synced: 0 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(getQueue()[0]).toMatchObject({ status: 'conflict', errorCode: 'version_conflict' });
+    expect(trips.updatePacking).toHaveBeenCalledWith(op().tripId, op().entryId, false, 7);
+
+    await engine.resolveConflict(op().id, 'apply_local');
+    expect(operations.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: freshId, packed: true, baseVersion: 7, status: 'pending' }));
+    expect(operations.enqueue.mock.invocationCallOrder[0]).toBeLessThan(operations.remove.mock.invocationCallOrder[0]);
   });
 
   it.each(['not_found', 'trip_read_only', 'idempotency_key_reused'] as const)('parks backend %s in Needs attention without retry', async (code) => {
