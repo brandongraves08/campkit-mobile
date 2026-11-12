@@ -144,6 +144,30 @@ describe('trip screens', () => {
     expect(discardOperation).toHaveBeenCalledWith('55555555-5555-4555-8555-555555555555');
   });
 
+  it('shows a visible synced state once pending changes are acknowledged', async () => {
+    syncPendingOperations.mockResolvedValue({ synced: 1, conflicts: 0, needsAttention: 0, paused: false });
+    await render(<TripScreen />);
+    expect(await screen.findByText('All packing changes synced')).toBeTruthy();
+    expect(screen.queryByText(/Pending sync/)).toBeNull();
+  });
+
+  it('does not claim a synced state when nothing was acknowledged', async () => {
+    syncPendingOperations.mockResolvedValue({ synced: 0, conflicts: 0, needsAttention: 0, paused: true });
+    await render(<TripScreen />);
+    expect(await screen.findByText('Synthetic stove')).toBeTruthy();
+    expect(screen.queryByText('All packing changes synced')).toBeNull();
+  });
+
+  it('hides the synced state again when a new offline change is queued', async () => {
+    syncPendingOperations.mockResolvedValue({ synced: 1, conflicts: 0, needsAttention: 0, paused: false });
+    await render(<TripScreen />);
+    expect(await screen.findByText('All packing changes synced')).toBeTruthy();
+    const checkbox = await screen.findByRole('switch', { name: /Synthetic stove/i });
+    await act(async () => { fireEvent(checkbox, 'valueChange', true); });
+    expect(await screen.findByText('Pending sync · Packed')).toBeTruthy();
+    expect(screen.queryByText('All packing changes synced')).toBeNull();
+  });
+
   it('shows stale/offline state and does not offer edits when no local snapshot exists', async () => {
     getPackingSnapshot.mockResolvedValue(null);
     await render(<TripScreen />);

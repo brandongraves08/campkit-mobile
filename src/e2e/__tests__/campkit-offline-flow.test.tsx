@@ -1,36 +1,103 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { act, render, screen, waitFor } from '@testing-library/react-native';
+
+jest.mock('expo-sqlite', () => ({
+  openDatabaseAsync: jest.fn(),
+  deleteDatabaseAsync: jest.fn(),
+}));
+jest.mock('expo-secure-store', () => {
+  const values = new Map<string, string>();
+  return {
+    WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+    __values: values,
+    getItemAsync: jest.fn(async (key: string) => values.get(key) ?? null),
+    setItemAsync: jest.fn(async (key: string, value: string) => { values.set(key, value); }),
+    deleteItemAsync: jest.fn(async (key: string) => { values.delete(key); }),
+  };
+});
+jest.mock('expo-crypto', () => {
+  let count = 0;
+  return {
+    randomUUID: jest.fn(() => {
+      count += 1;
+      return `00000000-0000-4000-8000-${String(count).padStart(12, '0')}`;
+    }),
+    getRandomValues: jest.fn((target: Uint8Array) => {
+      for (let index = 0; index < target.length; index += 1) target[index] = (index * 7 + 11) % 256;
+      return target;
+    }),
+  };
+});
+const reconnectListeners: (() => void)[] = [];
+jest.mock('../../sync/connectivity', () => ({
+  onForeground: () => ({ remove: jest.fn() }),
+  onConnectionRestored: (callback: () => void) => { reconnectListeners.push(callback); return { remove: jest.fn() }; },
+}));
+jest.mock('../../trips/trips-context', () => ({
+  useTrips: () => (globalThis as unknown as { __campkitService: unknown }).__campkitService,
+}));
+jest.mock('expo-router', () => ({ router: { push: jest.fn(), back: jest.fn() }, useLocalSearchParams: () => ({ tripId: '22222222-2222-4222-8222-222222222222' }) }));
+
+declare const require: (name: string) => any;
+declare const __dirname: string;
+
+import * as SQLite from 'expo-sqlite';
+import * as SecureStore from 'expo-secure-store';
+import { AppState } from 'react-native';
 import { ApiClient } from '../../api/http';
 import { AuthClient } from '../../auth/auth-client';
-import { MemberSession } from '../../auth/token-store';
+import { TokenStore } from '../../auth/token-store';
+import { AccountVault } from '../../storage/account-vault';
 import { TripsService } from '../../trips/trips-service';
-import { PendingOperation } from '../../storage/operations-repository';
+import { TestSqliteDatabase } from '../../storage/__tests__/sqlite-test-harness';
+import TripScreen from '../../../app/trips/[tripId]';
 
-jest.mock('expo-crypto', () => ({ randomUUID: () => '33333333-3333-4333-8333-333333333333' }));
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const sqlite = SQLite as unknown as {
+  openDatabaseAsync: jest.Mock<(name: string) => Promise<unknown>>;
+  deleteDatabaseAsync: jest.Mock<(name: string) => Promise<void>>;
+};
+const secure = SecureStore as unknown as { __values: Map<string, string> };
 
 const memberId = 'member-synthetic';
 const householdId = '11111111-1111-4111-8111-111111111111';
 const tripId = '22222222-2222-4222-8222-222222222222';
+const databaseName = `campkit-${memberId}.db`;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
+let directory: string;
+let handles: TestSqliteDatabase[];
+
+beforeEach(() => {
+  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'campkit-e2e-'));
+  handles = [];
+  reconnectListeners.length = 0;
+  secure.__values.clear();
+  sqlite.openDatabaseAsync.mockReset();
+  sqlite.openDatabaseAsync.mockImplementation(async (name: string) => {
+    const handle = new TestSqliteDatabase(path.join(directory, name));
+    handles.push(handle);
+    return handle;
+  });
+  sqlite.deleteDatabaseAsync.mockReset();
+  sqlite.deleteDatabaseAsync.mockImplementation(async (name: string) => {
+    fs.rmSync(path.join(directory, name), { force: true });
+  });
+});
+
+afterEach(async () => {
+  for (const handle of handles) await handle.closeAsync().catch(() => undefined);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
 describe('mocked offline account-to-sync flow', () => {
-  it('signs in, selects a household, downloads, packs offline, restarts, reconnects and displays synced state', async () => {
-    let storedSession: MemberSession | null = null;
-    let selectedHousehold: string | null = null;
+  it('signs in, downloads, packs offline, restarts, reconnects and shows the synced state', async () => {
     let online = true;
     const requests: string[] = [];
-    let snapshot: any = null;
-    const queued: PendingOperation[] = [];
-    const sessionStore = {
-      async save(session: MemberSession) { storedSession = session; },
-      async load() { return storedSession; },
-      async clear() { storedSession = null; },
-    };
-    const selectionStore = {
-      async getItemAsync() { return selectedHousehold; },
-      async setItemAsync(_key: string, value: string) { selectedHousehold = value; },
-      async deleteItemAsync() { selectedHousehold = null; },
-    };
     const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       requests.push(`${init?.method ?? 'GET'} ${url.pathname}`);
@@ -45,51 +112,80 @@ describe('mocked offline account-to-sync flow', () => {
       }
       return json({ error: { code: 'not_found' } }, 404);
     };
+
+    // --- Sign in through the mocked OAuth browser exchange, persisting the
+    //     synthetic tokens in the (mocked) platform keychain.
+    const tokens = new TokenStore(SecureStore);
     const auth = new AuthClient({
-      baseUrl: 'https://campkit.synthetic.invalid', clientId: 'synthetic-client', tokens: sessionStore,
+      baseUrl: 'https://campkit.synthetic.invalid', clientId: 'synthetic-client', tokens,
       browser: { async open() { return { type: 'success', url: 'com.graveystudios.campkit://oauth/callback?state=state&code=synthetic-code' }; } },
       crypto: { random: () => 'synthetic-verifier', challenge: async () => 'synthetic-challenge' }, fetcher, makeState: () => 'state', now: () => 1_000,
     });
-    const signedIn = await auth.signIn();
-    expect(signedIn.memberId).toBe(memberId);
-    const api = new ApiClient({ baseUrl: 'https://campkit.synthetic.invalid', sessionStore, selectionStore, refresh: () => auth.refreshSession(), fetcher });
+    expect((await auth.signIn()).memberId).toBe(memberId);
+
+    const api = new ApiClient({ baseUrl: 'https://campkit.synthetic.invalid', sessionStore: tokens, refresh: () => auth.refreshSession(), fetcher });
     const households = await api.listHouseholds();
     await api.selectHousehold(households[0].id);
     expect(await api.selectedHousehold()).toBe(householdId);
 
-    const tripsRepository = {
-      async saveSnapshot(value: any) { snapshot = value; return snapshot; },
-      async listSnapshots() { return snapshot ? [snapshot] : []; },
-      async getSnapshot(id: string) { return id === snapshot?.tripId ? snapshot : null; },
-      async setPacked(_trip: string, entry: string, packed: boolean) { snapshot.packing.find((row: any) => row.entryId === entry).packed = packed; },
-      async updatePacking(_trip: string, entry: string, packed: boolean, version: number) { Object.assign(snapshot.packing.find((row: any) => row.entryId === entry), { packed, version }); },
-    };
-    const operationsRepository = {
-      async enqueue(input: any) { const op = { ...input, memberId, householdId, status: 'pending', createdAt: '2026-06-01T00:00:00.000Z', errorCode: null }; queued.push(op); return op; },
-      async list(status?: string) { return queued.filter((op) => status === undefined || op.status === status); },
-      async get(id: string) { return queued.find((op) => op.id === id) ?? null; },
-      async updateStatus(id: string, status: any, errorCode: any = null) { Object.assign(queued.find((op) => op.id === id)!, { status, errorCode }); },
-      async remove(id: string) { const index = queued.findIndex((op) => op.id === id); if (index < 0) return false; queued.splice(index, 1); return true; },
-    };
-    const service = () => new TripsService({ api, memberId, householdId: () => api.selectedHousehold(), repository: async () => tripsRepository as any, operations: async () => operationsRepository as any, now: () => new Date('2026-06-01T00:00:00.000Z') });
+    // --- Real encrypted-database adapters behind the trip service.
+    const serviceFor = (vault: AccountVault) => new TripsService({
+      api, memberId, householdId: () => api.selectedHousehold(),
+      repository: async (household) => (await vault.openAccount(memberId, household)).trips,
+      operations: async (household) => (await vault.openAccount(memberId, household)).operations,
+      now: () => new Date('2026-06-01T00:00:00.000Z'),
+    });
+    const vault = new AccountVault();
+    await serviceFor(vault).downloadTrip(tripId);
 
-    await service().downloadTrip(tripId);
     online = false;
-    await service().setPacked(tripId, '12', true);
-    expect(snapshot.packing[0]).toMatchObject({ packed: true, version: 1 });
-    expect(queued).toHaveLength(1);
+    await serviceFor(vault).setPacked(tripId, '12', true);
+    const firstVault = vault;
+    await firstVault.closeAll();
 
-    // Cold restart: reconstruct the service while retaining durable local repositories.
-    const restartedService = service();
-    expect(queued[0]).toMatchObject({ memberId, householdId, tripId, entryId: '12', status: 'pending' });
-    expect((await restartedService.getPackingSnapshot(tripId))?.packing[0].packed).toBe(true);
-    online = true;
+    // --- Cold restart: a brand-new vault opens the same encrypted files again.
+    const restartedVault = new AccountVault();
+    const restartedService = serviceFor(restartedVault);
+    const restored = await restartedService.getPackingSnapshot(tripId);
+    expect(restored?.packing[0]).toMatchObject({ entryId: '12', packed: true, version: 1 });
+    expect(await restartedService.listOperations()).toMatchObject([
+      { memberId, householdId, tripId, entryId: '12', packed: true, status: 'pending', baseVersion: 1 },
+    ]);
     expect(await api.selectedHousehold()).toBe(householdId);
-    const result = await restartedService.syncPendingOperations();
+    expect((await tokens.load())?.memberId).toBe(memberId);
+    // The data really came back from a second native handle on the same file.
+    expect(sqlite.openDatabaseAsync.mock.calls.filter(([name]) => name === databaseName)).toHaveLength(2);
+
+    // --- Reconnect through the app's own connectivity hook and render the
+    //     user-visible screen over the restarted service.
+    (globalThis as unknown as { __campkitService: unknown }).__campkitService = restartedService;
+    await render(<TripScreen />);
+    expect(await screen.findByText('Tent')).toBeTruthy();
+    expect(await screen.findByText('Pending sync · Packed')).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Tent', checked: true })).toBeTruthy();
+    expect(screen.queryByText('All packing changes synced')).toBeNull();
+
+    // Wait for the offline mount-time sync to exhaust its bounded retries so the
+    // reconnection attempt below is the only in-flight sync.
+    await waitFor(() => expect(requests.filter((line) => line.startsWith('PUT'))).toHaveLength(3), { timeout: 5000 });
+    expect(screen.getByRole('switch', { name: 'Tent', checked: true })).toBeTruthy();
+
+    online = true;
+    expect(reconnectListeners).toHaveLength(1);
+    // The screen only resumes sync while the app is foregrounded.
+    AppState.currentState = 'active';
+    await act(async () => { reconnectListeners.at(-1)?.(); });
+    expect(requests.filter((line) => line.startsWith('PUT'))).toHaveLength(4);
+    expect(await screen.findByText('All packing changes synced')).toBeTruthy();
+    expect(screen.queryByText(/Pending sync/)).toBeNull();
+    expect(screen.getByRole('switch', { name: 'Tent', checked: true })).toBeTruthy();
     expect(requests).toContain(`PUT /api/mobile/v1/households/${householdId}/trips/${tripId}/packing/12/`);
-    expect(result).toMatchObject({ synced: 1, paused: false });
-    expect(queued).toHaveLength(0);
-    expect((await restartedService.getPackingSnapshot(tripId))?.packing[0]).toMatchObject({ packed: true, version: 2 });
-    expect((await sessionStore.load())?.memberId).toBe(memberId);
+
+    // --- The acknowledgement is durable: a third cold start shows version 2
+    //     and no queued operation.
+    await restartedVault.closeAll();
+    const finalService = serviceFor(new AccountVault());
+    expect((await finalService.getPackingSnapshot(tripId))?.packing[0]).toMatchObject({ packed: true, version: 2 });
+    expect(await finalService.listOperations()).toHaveLength(0);
   });
 });

@@ -15,6 +15,8 @@ export type HarnessValue = string | number | null;
 interface HarnessOptions {
   /** `null` models a build without SQLCipher (no cipher_version row). */
   cipherVersion?: string | null;
+  /** `false` models a plain (non-SQLCipher) database that needs no PRAGMA key. */
+  requiresKey?: boolean;
 }
 
 const KEY_STATEMENT = /^\s*PRAGMA\s+key\s*=/i;
@@ -32,6 +34,7 @@ class HarnessConnection {
 
   protected guard(sql: string): void {
     if (KEY_STATEMENT.test(sql) || CIPHER_STATEMENT.test(sql)) return;
+    if (this.options.requiresKey === false) return;
     if (!this.keyApplied) throw new Error('storage harness: statement attempted before PRAGMA key');
   }
 

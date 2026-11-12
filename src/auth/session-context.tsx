@@ -5,6 +5,7 @@ import { TokenStore } from './token-store';
 import * as SecureStore from 'expo-secure-store';
 import { clearTripsForSignOut } from '../trips/trips-service';
 import { AccountLifecycle } from '../app-lifecycle/account-lifecycle';
+import { SqliteRecoveryStore } from '../app-lifecycle/recovery-store';
 
 interface SessionContextValue {
   session: MemberSession | null; api: ApiClient; error: string | null;
@@ -23,6 +24,9 @@ export function SessionProvider({ children }: React.PropsWithChildren) {
   const api = useMemo(() => new ApiClient({ baseUrl: baseUrl || 'https://invalid.invalid', refresh: () => auth.refreshSession(), sessionStore }), [auth]);
   const lifecycle = useMemo(() => new AccountLifecycle({
     markerStore: SecureStore,
+    // Independent durable barrier: a keychain failure during teardown must not
+    // let a restarted process offer sign-in over an uncleared vault.
+    recoveryStore: new SqliteRecoveryStore(),
     clearCredentials: () => auth.signOut(),
     clearSelection: (memberId) => api.clearHouseholdSelection(memberId),
     clearVault: (memberId) => clearTripsForSignOut(memberId),

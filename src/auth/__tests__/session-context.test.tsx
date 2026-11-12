@@ -10,16 +10,29 @@ jest.mock('expo-secure-store', () => ({
   setItemAsync: jest.fn(async () => {}), deleteItemAsync: jest.fn(async () => {}),
 }));
 jest.mock('../../trips/trips-service', () => ({ clearTripsForSignOut: jest.fn(async () => {}) }));
+jest.mock('../../app-lifecycle/recovery-store', () => {
+  const values = new Map<string, string>();
+  class SqliteRecoveryStore {
+    async getItemAsync(key: string) { return values.get(key) ?? null; }
+    async setItemAsync(key: string, value: string) { values.set(key, value); }
+    async deleteItemAsync(key: string) { values.delete(key); }
+  }
+  return { SqliteRecoveryStore, __values: values };
+});
 
 function Harness() {
   const session = useSession();
-  return <>{session.session ? <Text>{session.session.memberId}</Text> : null}{session.error ? <Text>{session.error}</Text> : null}<Button title="Sign in" onPress={() => void session.signIn()} /><Button title="Sign out" onPress={() => void session.signOut()} /></>;
+  return <>{session.session ? <Text>{session.session.memberId}</Text> : null}{session.error ? <Text>{session.error}</Text> : null}<Button title="Sign in" onPress={() => void session.signIn()} /><Button title="Sign out" onPress={() => { session.signOut().catch(() => undefined); }} /></>;
 }
 
 describe('member session cache cleanup', () => {
   afterEach(() => {
     const { getItemAsync } = jest.requireMock('expo-secure-store') as { getItemAsync: jest.Mock<(key: string) => Promise<string | null>> };
     getItemAsync.mockImplementation(async (key: string) => key === 'campkit.member-session.v1' ? JSON.stringify({ memberId: 'member-synthetic', accessToken: 'opaque', refreshToken: 'opaque', expiresAt: 9 }) : null);
+    const { setItemAsync } = jest.requireMock('expo-secure-store') as { setItemAsync: jest.Mock<(key: string, value: string) => Promise<void>> };
+    setItemAsync.mockImplementation(async () => {});
+    (clearTripsForSignOut as jest.MockedFunction<typeof clearTripsForSignOut>).mockImplementation(async () => {});
+    (jest.requireMock('../../app-lifecycle/recovery-store') as { __values: Map<string, string> }).__values.clear();
   });
 
   it('does not start sign-in while secure account restoration is unresolved', async () => {
@@ -39,5 +52,46 @@ describe('member session cache cleanup', () => {
     expect(deleteItemAsync).toHaveBeenCalledWith('campkit.member-session.v1');
     expect(deleteItemAsync).toHaveBeenCalledWith('campkit.selected-household.v1.member-synthetic');
     expect(await screen.queryByText('member-synthetic')).toBeNull();
+  });
+
+  it('blocks a freshly mounted provider while the prior vault is still uncleared', async () => {
+    const secure = jest.requireMock('expo-secure-store') as {
+      setItemAsync: jest.Mock<(key: string, value: string) => Promise<void>>;
+    };
+    const clearVault = clearTripsForSignOut as jest.MockedFunction<typeof clearTripsForSignOut>;
+    const recovery = jest.requireMock('../../app-lifecycle/recovery-store') as { __values: Map<string, string> };
+    // The secure-store barrier cannot be written, so only the independent
+    // durable record can carry the pending cleanup into the next process.
+    secure.setItemAsync.mockRejectedValue(new Error('keychain unavailable'));
+    clearVault.mockRejectedValue(new Error('vault locked'));
+
+    const first = await render(<SessionProvider><Harness /></SessionProvider>);
+    expect(await screen.findByText('member-synthetic')).toBeTruthy();
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'Sign out' })); });
+    expect(await screen.findByText('Unable to clear secure sign-in data.')).toBeTruthy();
+    expect(recovery.__values.get('campkit.lifecycle.recovery.v1')).toBe('member-synthetic');
+    await first.unmount();
+
+    // Fresh process: the primary marker was never written, the vault is still
+    // locked, so sign-in must not be offered.
+    await render(<SessionProvider><Harness /></SessionProvider>);
+    expect(await screen.findByText('Unable to safely restore the prior account. Please retry sign-in.')).toBeTruthy();
+    fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText('Unable to safely restore the prior account. Please retry sign-in.')).toBeTruthy();
+  });
+
+  it('releases the persisted recovery barrier once the vault is safely cleared', async () => {
+    const secure = jest.requireMock('expo-secure-store') as {
+      setItemAsync: jest.Mock<(key: string, value: string) => Promise<void>>;
+    };
+    const clearVault = clearTripsForSignOut as jest.MockedFunction<typeof clearTripsForSignOut>;
+    secure.setItemAsync.mockRejectedValue(new Error('keychain unavailable'));
+    await render(<SessionProvider><Harness /></SessionProvider>);
+    expect(await screen.findByText('member-synthetic')).toBeTruthy();
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'Sign out' })); });
+    // The vault cleared successfully, so the barrier is released even though the
+    // keychain marker could not be written.
+    expect(clearVault).toHaveBeenCalledWith('member-synthetic');
+    expect((jest.requireMock('../../app-lifecycle/recovery-store') as { __values: Map<string, string> }).__values.size).toBe(0);
   });
 });

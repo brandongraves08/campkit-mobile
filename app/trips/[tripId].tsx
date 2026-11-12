@@ -19,8 +19,14 @@ export default function TripScreen() {
   const [saving, setSaving] = useState<string | null>(null);
   const [saveError, setSaveError] = useState(false);
   const [operations, setOperations] = useState<PendingOperation[]>([]);
+  const [synced, setSynced] = useState(false);
   const refreshQueue = useCallback(async () => { try { setOperations(await service.listOperations()); } catch { /* account/session may be changing */ } }, [service]);
-  const sync = useCallback(async () => { try { await service.syncPendingOperations(); } finally { await refreshQueue(); } }, [refreshQueue, service]);
+  const sync = useCallback(async () => {
+    try {
+      const result = await service.syncPendingOperations();
+      if (result.synced > 0) setSynced(true);
+    } finally { await refreshQueue(); }
+  }, [refreshQueue, service]);
   const load = useCallback(async () => {
     setLoading(true); setProblem(null);
     try {
@@ -41,7 +47,7 @@ export default function TripScreen() {
   }, [sync]);
   async function changePacked(entryId: string, packed: boolean) {
     if (!trip) return;
-    setSaving(entryId); setSaveError(false);
+    setSaving(entryId); setSaveError(false); setSynced(false);
     try {
       const pending = await service.setPacked(trip.tripId, entryId, packed);
       setTrip({ ...trip, packing: trip.packing.map((row) => row.entryId === entryId ? { ...row, packed } : row) });
@@ -55,6 +61,7 @@ export default function TripScreen() {
         <Text style={styles.kicker}>PACKING LIST</Text><Text style={styles.title}>{trip.name}</Text><Text style={styles.subtitle}>{trip.destination ?? 'Destination not set'} · {trip.startsOn}</Text>
         <SyncStatus downloadedAt={trip.downloadedAt}/>
         {operations.filter((operation) => operation.tripId === trip.tripId && operation.status === 'pending').map((operation) => <Text key={operation.id} accessibilityRole="summary" style={styles.pending}>Pending sync · {operation.packed ? 'Packed' : 'Not packed'}</Text>)}
+        {synced && !operations.some((operation) => operation.tripId === trip.tripId && operation.status === 'pending') ? <Text accessibilityRole="summary" style={styles.synced}>All packing changes synced</Text> : null}
         {operations.filter((operation) => operation.tripId === trip.tripId && operation.status === 'conflict').map((operation) => <View key={operation.id} style={styles.notice}><Text style={styles.noticeTitle}>Packing changed elsewhere</Text><Text style={styles.body}>Server: {trip.packing.find((row) => row.entryId === operation.entryId)?.packed ? 'Packed' : 'Not packed'} · Your value: {operation.packed ? 'Packed' : 'Not packed'}</Text><Pressable accessibilityRole="button" accessibilityLabel="Resolve packing conflict" onPress={() => router.push({ pathname: '/trips/conflicts', params: { operationId: operation.id } })}><Text style={styles.retry}>Review choices</Text></Pressable></View>)}
         {operations.filter((operation) => operation.tripId === trip.tripId && operation.status === 'needs_attention').map((operation) => <View key={operation.id} style={styles.notice}><Text accessibilityRole="alert" style={styles.error}>Needs attention · {operation.errorCode === 'not_found' ? 'This item is unavailable or access may have changed.' : operation.errorCode === 'trip_read_only' ? 'This trip is read-only.' : 'This change could not be safely synced.'}</Text><Pressable accessibilityRole="button" accessibilityLabel="Discard unsyncable packing change" onPress={async () => { await service.discardOperation(operation.id); await refreshQueue(); }}><Text style={styles.retry}>Discard change</Text></Pressable></View>)}
         {saveError ? <Text accessibilityRole="alert" style={styles.error}>Your change was not saved. Please try again.</Text> : null}
@@ -64,4 +71,4 @@ export default function TripScreen() {
     </ScrollView>
   </SafeAreaView>;
 }
-const styles = StyleSheet.create({ page: { flex: 1, backgroundColor: '#F7F5EF', paddingHorizontal: 22 }, header: { height: 54, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, back: { color: '#1F5A43', fontSize: 16, fontWeight: '700', paddingVertical: 10, paddingRight: 12 }, brand: { color: '#1F5A43', fontSize: 16, fontWeight: '800' }, content: { paddingBottom: 32 }, kicker: { color: '#1F5A43', fontSize: 12, letterSpacing: 1.3, fontWeight: '800', marginTop: 18 }, title: { color: '#182D3A', fontSize: 29, lineHeight: 35, fontWeight: '800', marginTop: 8 }, subtitle: { color: '#52636A', fontSize: 15, marginTop: 6 }, section: { color: '#182D3A', fontSize: 19, fontWeight: '700', marginTop: 28, marginBottom: 8 }, body: { color: '#52636A', fontSize: 15, lineHeight: 22, textAlign: 'center' }, state: { minHeight: 250, justifyContent: 'center', alignItems: 'center', gap: 14 }, retry: { color: '#1F5A43', fontWeight: '700', padding: 12 }, error: { color: '#9B312C', fontWeight: '600', marginTop: 12 }, pending: { color: '#52636A', fontSize: 13, fontWeight: '700', marginTop: 12 }, notice: { backgroundColor: '#FFF1D6', borderRadius: 12, padding: 14, marginTop: 12, gap: 6 }, noticeTitle: { color: '#704B12', fontSize: 15, fontWeight: '800' } });
+const styles = StyleSheet.create({ page: { flex: 1, backgroundColor: '#F7F5EF', paddingHorizontal: 22 }, header: { height: 54, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, back: { color: '#1F5A43', fontSize: 16, fontWeight: '700', paddingVertical: 10, paddingRight: 12 }, brand: { color: '#1F5A43', fontSize: 16, fontWeight: '800' }, content: { paddingBottom: 32 }, kicker: { color: '#1F5A43', fontSize: 12, letterSpacing: 1.3, fontWeight: '800', marginTop: 18 }, title: { color: '#182D3A', fontSize: 29, lineHeight: 35, fontWeight: '800', marginTop: 8 }, subtitle: { color: '#52636A', fontSize: 15, marginTop: 6 }, section: { color: '#182D3A', fontSize: 19, fontWeight: '700', marginTop: 28, marginBottom: 8 }, body: { color: '#52636A', fontSize: 15, lineHeight: 22, textAlign: 'center' }, state: { minHeight: 250, justifyContent: 'center', alignItems: 'center', gap: 14 }, retry: { color: '#1F5A43', fontWeight: '700', padding: 12 }, error: { color: '#9B312C', fontWeight: '600', marginTop: 12 }, pending: { color: '#52636A', fontSize: 13, fontWeight: '700', marginTop: 12 }, synced: { color: '#1F5A43', fontSize: 13, fontWeight: '700', marginTop: 12 }, notice: { backgroundColor: '#FFF1D6', borderRadius: 12, padding: 14, marginTop: 12, gap: 6 }, noticeTitle: { color: '#704B12', fontSize: 15, fontWeight: '800' } });
