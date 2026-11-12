@@ -23,13 +23,20 @@ Expo + React Native + TypeScript is the current recommendation for one native iO
 
 ## Project status
 
-The native Expo/React Native client is implemented as a **local-only integration candidate**. It includes member sign-in with OAuth PKCE, household/trip views, encrypted offline packing, and queued sync/conflict handling. Client tests, typecheck, Android build/install, and a signed-out-screen visual check pass. Final acceptance is still open: live Android OAuth/backend and sync scenarios plus native iOS QA have not been verified; this candidate has not been published or distributed.
+The native Expo/React Native client implements member sign-in with OAuth PKCE, household/trip views, encrypted offline packing, and queued sync/conflict handling. Client tests (155 across 21 suites), typecheck, the Android debug build, and the backend mobile-API suite (57 tests) pass.
+
+On 2026-11-12 the full path was exercised on an Android 16 emulator against a self-hosted CampKit sandbox: browser PKCE sign-in and callback, household selection, trip download, offline packing change, and automatic sync on reconnect — with the server rows and versions read back to confirm each write. That run also found and fixed a backend defect: the packing write endpoint was not CSRF-exempt, so every `PUT` was rejected with `403 CSRF verification failed` even though the endpoint is bearer-token, cookie-free.
+
+Still open before a private beta: native iOS QA against an iOS build (no iOS runtime in this environment), and the known limitations listed in [local development](docs/development.md#live-end-to-end-verification-2026-11-12). No build has been submitted to TestFlight or Google Play internal testing.
 
 ## Development documentation and screenshots
 
-See [local development and verification](docs/development.md) for setup, native build, test commands, OAuth configuration, storage/security notes, and the evidence currently available. Verified Android screenshots:
+See [local development and verification](docs/development.md) for setup, native build, test commands, OAuth configuration, storage/security notes, and the evidence currently available. Verified Android screenshots from the 2026-11-12 live run (360×800, synthetic household data):
 
-- [Signed-out Android app at 360×800](docs/screenshots/t7-android-signed-out-live-2026-11-12.png) — live Android 16 emulator capture after the signed-out/loading-state fix.
-- [Encrypted-storage Android probe](docs/screenshots/storage-probe-android.png) — synthetic native SQLCipher verification screen.
+- [Signed-out Android app](docs/screenshots/t7-android-signed-out-live-2026-11-12.png) — live Android 16 emulator capture after the signed-out/loading-state fix.
+- [Household chooser after sign-in](docs/screenshots/t7-android-households-2026-11-12.png) — restored session, one household selected.
+- [Trips screen](docs/screenshots/t7-android-trips-downloaded-2026-11-12.png) — a trip stored for offline use.
+- [Packing list after sync](docs/screenshots/t7-android-trip-synced-2026-11-12.png) — three items packed, "All packing changes synced".
+- [Encrypted-storage probe](docs/screenshots/storage-probe-android.png) — synthetic native SQLCipher verification screen.
 
-The signed-out screenshot verifies presentation only; it is not evidence of a successful OAuth login or live household data flow.
+These captures show the app's own screens; they do not by themselves prove the backend write, which is recorded as read-back row state and versions in [local development](docs/development.md#live-end-to-end-verification-2026-11-12).

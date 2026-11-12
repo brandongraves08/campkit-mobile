@@ -76,3 +76,35 @@ The scaffold's Task 1 environment had no attached Android device; that limitatio
 Native verification on the Android 16 emulator against a debug build of this worktree (`PRAGMA cipher_version` = `4.17.0 community`): opening an account database, saving and reading a synthetic trip snapshot, queueing a pending operation, closing and reopening (snapshot and queue retained), deleting the SecureStore key (reopen denied), clearing, and reopening an empty database all behaved as above. The pulled on-device file began with random bytes rather than `SQLite format 3` and contained none of the synthetic trip/packing labels or table names; SecureStore held keystore-AES entries. The temporary probe route used for the check was removed; its capture is `docs/screenshots/storage-probe-android.png`. iOS remains untested.
 
 Storage tests run real SQL through a test-only `node:sqlite` adapter while the SQLCipher PRAGMAs are shimmed; only the emulator run proves actual at-rest encryption. `node:sqlite` needs the Node build used here (22.23) or newer. Run the tests with `npm test -- --runInBand src/storage/__tests__`, then `npm run typecheck`.
+
+## Live end-to-end verification (2026-11-12)
+
+Exercised against a debug build of this worktree on an Android 16 emulator (`sdk_gphone64_x86_64`, 360×800 at density 160), with the JS bundle served by Metro from this worktree and `EXPO_PUBLIC_CAMPKIT_BASE_URL` / `EXPO_PUBLIC_CAMPKIT_OAUTH_CLIENT_ID` pointing at a self-hosted CampKit sandbox over HTTPS on the home LAN. All household, trip, and packing records were synthetic and were deleted from the sandbox afterwards.
+
+Steps actually run, in order:
+
+1. Signed-out landing screen, "Sign in" → "Continue in browser".
+2. Browser custom tab opened `/o/authorize/` with PKCE S256; the internal development CA had to be installed as a user CA on the emulator — a browser custom tab uses platform trust, not the app's debug `network-security-config`.
+3. Signed in, approved the `mobile:packing` scope, and the `com.graveystudios.campkit://oauth/callback` deep link returned to the app with the session stored.
+4. Household chooser listed the member's household; selecting it opened Trips.
+5. Downloaded a trip; it moved to "Downloaded trips" with "Downloaded for offline use".
+6. Opened the offline copy (3 gear rows, none packed) and toggled one row — it showed "Pending sync · Packed" and stayed local.
+7. Returned to the foreground; the queue drained and the screen showed "All packing changes synced".
+8. Disabled Wi-Fi and mobile data (`svc wifi disable`, `svc data disable`, confirmed `Active default network: none`), toggled a second row while offline, and confirmed the pending state.
+9. Re-enabled both radios; `onConnectionRestored` woke the queue without any user action and the screen returned to "All packing changes synced".
+
+Server-side read-back after each write (rather than trusting the UI): `TripGear.packed` and `TripGear.version` moved from `False/1` to `True/2` per row, with one idempotent `PackingOperation` row per accepted write, and the client's pending queue emptied. Two rows were synced this way, the third through the same path during a later reconnect.
+
+### Backend defect found and fixed by this run
+
+The packing write endpoint (`PUT /api/mobile/v1/households/<id>/trips/<id>/packing/<entry>/`) was **not** CSRF-exempt. Django's CSRF middleware applies to unsafe methods regardless of how the request authenticates, so every write from the app returned `403 CSRF verification failed` (HTML, not the documented error envelope) while every read worked — GETs are unaffected. The backend's own tests did not catch it because Django's test client skips CSRF checks unless `enforce_csrf_checks=True`.
+
+The fix is a `@csrf_exempt` on that view in the CampKit backend plus a regression test that issues the write from a `Client(enforce_csrf_checks=True)`. CSRF protection is meaningless on this endpoint: it authenticates with a bearer token and never uses session cookies. The client's queue treats that unenveloped 403 as an unmapped error, so the failure surfaced to the user as a paused sync rather than an HTTP error.
+
+### Known limitations recorded by this run
+
+- **iOS is unverified.** No iOS build or simulator was available; every native claim here is Android only.
+- **A packing write is never retried after a `401`.** `ApiClient.request` refreshes the session and retries only for `GET`, and `SyncEngine` pauses the queue on `unauthorized`. Because access tokens are short-lived (900 s in the sandbox), a change made after the token expires can sit pending until some other authenticated `GET` refreshes the session. The trip screen has no pull-to-refresh, so going back to Trips is what recovers it.
+- **The paused-sync message over-claims.** `SyncEngine` sets `paused` both for auth rejections and for errors it cannot map, and the trip screen always renders "Sync paused · Household membership was revoked". An unmapped server fault therefore reads as a revoked membership.
+- **The root route is static.** `/` always renders the signed-out landing screen even when a session is restored in SecureStore; the restored session only takes effect on the next screen (`/sign-in` redirects onward). A relaunch shows "Signed out" for one tap without actually losing the session.
+- **Debug builds show Metro's warning banner** ("Open debugger to view warnings") over the UI; it is a development-client artifact and is absent from a release build.
