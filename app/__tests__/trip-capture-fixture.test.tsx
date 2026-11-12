@@ -28,6 +28,9 @@ describe('synthetic trip capture fixture route', () => {
     if (state === 'paused') {
       expect(screen.getByRole('alert')).toHaveTextContent(/Sync paused · Household membership was revoked/i);
       expect(screen.getByText('Pending sync · Packed')).toBeTruthy();
+      expect(screen.getByText('Packed')).toBeTruthy();
+      expect(screen.getByRole('switch', { name: 'Synthetic stove', checked: true })).toBeTruthy();
+      expect(screen.queryByText('Not packed')).toBeNull();
     }
   });
 

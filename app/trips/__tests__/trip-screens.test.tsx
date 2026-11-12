@@ -130,6 +130,9 @@ describe('trip screens', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/Sync paused · Household membership was revoked/i);
     expect(screen.getByText('Pending sync · Packed')).toBeTruthy();
+    expect(screen.getByText('Packed')).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Synthetic stove', checked: true })).toBeTruthy();
+    expect(screen.queryByText('Not packed')).toBeNull();
     expect(listOperations).toHaveBeenCalled();
   });
 
@@ -140,6 +143,8 @@ describe('trip screens', () => {
     await render(<TripScreen />);
 
     expect(await screen.findByText('Pending sync · Packed')).toBeTruthy();
+    expect(screen.getByText('Packed')).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Synthetic stove', checked: true })).toBeTruthy();
     expect(screen.queryByText(/Sync paused/)).toBeNull();
   });
 
