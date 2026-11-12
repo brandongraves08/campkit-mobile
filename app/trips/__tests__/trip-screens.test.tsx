@@ -122,6 +122,27 @@ describe('trip screens', () => {
     expect(await screen.findByText('Pending sync · Packed')).toBeTruthy();
   });
 
+  it('visibly pauses a queued change after membership is revoked', async () => {
+    const pending = { id: '55555555-5555-4555-8555-555555555555', memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', tripId, entryId: '12', packed: true, baseVersion: 3, status: 'pending' as const, createdAt: '2026-06-30T12:00:00.000Z', errorCode: null };
+    syncPendingOperations.mockResolvedValue({ synced: 0, conflicts: 0, needsAttention: 0, paused: true });
+    listOperations.mockResolvedValue([pending]);
+    await render(<TripScreen />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Sync paused · Household membership was revoked/i);
+    expect(screen.getByText('Pending sync · Packed')).toBeTruthy();
+    expect(listOperations).toHaveBeenCalled();
+  });
+
+  it('keeps ordinary pending changes distinct from revoked-membership pause', async () => {
+    const pending = { id: '55555555-5555-4555-8555-555555555555', memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', tripId, entryId: '12', packed: true, baseVersion: 3, status: 'pending' as const, createdAt: '2026-06-30T12:00:00.000Z', errorCode: null };
+    syncPendingOperations.mockResolvedValue({ synced: 0, conflicts: 0, needsAttention: 0, paused: false });
+    listOperations.mockResolvedValue([pending]);
+    await render(<TripScreen />);
+
+    expect(await screen.findByText('Pending sync · Packed')).toBeTruthy();
+    expect(screen.queryByText(/Sync paused/)).toBeNull();
+  });
+
   it.each([
     ['Keep server', 'keep_server'],
     ['Apply my value', 'apply_local'],

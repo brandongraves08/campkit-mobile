@@ -6,7 +6,7 @@ import TripCaptureFixture from '../trip-capture-fixture';
 declare const require: (id: string) => { readFileSync(path: string, encoding: string): string };
 const fs = require('fs');
 
-const validStates = ['online', 'progress', 'downloaded', 'error', 'empty', 'loading', 'packing', 'pending', 'conflict', 'attention'] as const;
+const validStates = ['online', 'progress', 'downloaded', 'error', 'empty', 'loading', 'packing', 'pending', 'paused', 'synced', 'conflict', 'attention'] as const;
 let mockRouteState = 'online';
 
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ state: mockRouteState }) }));
@@ -25,6 +25,10 @@ describe('synthetic trip capture fixture route', () => {
     setEnvironment(true, state);
     const screen = await render(<TripCaptureFixture />);
     expect(screen.getByText(new RegExp(`Development capture fixture.*${state}`))).toBeTruthy();
+    if (state === 'paused') {
+      expect(screen.getByRole('alert')).toHaveTextContent(/Sync paused · Household membership was revoked/i);
+      expect(screen.getByText('Pending sync · Packed')).toBeTruthy();
+    }
   });
 
   it('falls back to the online state for an unknown route state', async () => {
