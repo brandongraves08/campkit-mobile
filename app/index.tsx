@@ -1,4 +1,4 @@
-import { ActivityIndicator, StatusBar, StyleSheet, Text, View, Pressable } from 'react-native';
+import { StatusBar, StyleSheet, Text, View, Pressable } from 'react-native';
 import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -19,9 +19,8 @@ export default function HomeScreen() {
               Signed out
             </Text>
           </View>
-          <ActivityIndicator color="#1F5A43" size="large" />
-          <Text accessibilityLabel="App loading status" style={styles.loadingText}>
-            Loading your trips
+          <Text style={styles.loadingText}>
+            Sign in to view your trips
           </Text>
         <Link href="/sign-in" asChild><Pressable accessibilityRole="button" style={styles.signInButton}><Text style={styles.signInText}>Sign in</Text></Pressable></Link>
         </View>

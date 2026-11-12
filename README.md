@@ -23,8 +23,13 @@ Expo + React Native + TypeScript is the current recommendation for one native iO
 
 ## Project status
 
-Research and requirements capture only. No mobile client code, backend changes, device builds, or store submissions have been made yet.
+The native Expo/React Native client is implemented as a **local-only integration candidate**. It includes member sign-in with OAuth PKCE, household/trip views, encrypted offline packing, and queued sync/conflict handling. Client tests, typecheck, Android build/install, and a signed-out-screen visual check pass. Final acceptance is still open: live Android OAuth/backend and sync scenarios plus native iOS QA have not been verified; this candidate has not been published or distributed.
 
-## Development documentation
+## Development documentation and screenshots
 
-The setup guide, feature guides, and verified screenshots will be added with the app implementation. Until then, there is no runnable app or development setup to document.
+See [local development and verification](docs/development.md) for setup, native build, test commands, OAuth configuration, storage/security notes, and the evidence currently available. Verified Android screenshots:
+
+- [Signed-out Android app at 360×800](docs/screenshots/t7-android-signed-out-live-2026-11-12.png) — live Android 16 emulator capture after the signed-out/loading-state fix.
+- [Encrypted-storage Android probe](docs/screenshots/storage-probe-android.png) — synthetic native SQLCipher verification screen.
+
+The signed-out screenshot verifies presentation only; it is not evidence of a successful OAuth login or live household data flow.
