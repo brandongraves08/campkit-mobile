@@ -2,6 +2,8 @@ import { assertPackingEntryId, assertUuid, CampKitDatabase } from './database';
 
 export const OPERATION_STATUSES = ['pending', 'conflict', 'needs_attention'] as const;
 export type OperationStatus = (typeof OPERATION_STATUSES)[number];
+export const OPERATION_ERROR_CODES = ['invalid_request', 'unauthorized', 'not_found', 'version_conflict', 'trip_read_only', 'idempotency_key_reused', 'operation_in_progress', 'network_error', 'timeout', 'server_unavailable', 'membership_revoked'] as const;
+export type OperationErrorCode = (typeof OPERATION_ERROR_CODES)[number];
 
 export interface NewOperation {
   id: string;
@@ -16,7 +18,7 @@ export interface PendingOperation extends NewOperation {
   householdId: string;
   status: OperationStatus;
   createdAt: string;
-  errorCode: string | null;
+  errorCode: OperationErrorCode | null;
 }
 
 interface OperationRow {
@@ -51,12 +53,12 @@ function assertPacked(value: unknown): boolean {
   return value;
 }
 
-function assertErrorCode(value: unknown): string | null {
+function assertErrorCode(value: unknown): OperationErrorCode | null {
   if (value === null || value === undefined) return null;
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > 120) {
+  if (typeof value !== 'string' || !OPERATION_ERROR_CODES.includes(value as OperationErrorCode)) {
     throw new Error('Invalid error code for operation');
   }
-  return value;
+  return value as OperationErrorCode;
 }
 
 function toOperation(row: OperationRow): PendingOperation {
@@ -70,7 +72,7 @@ function toOperation(row: OperationRow): PendingOperation {
     baseVersion: row.base_version,
     status: assertStatus(row.status),
     createdAt: row.created_at,
-    errorCode: row.error_code,
+    errorCode: assertErrorCode(row.error_code),
   };
 }
 
@@ -134,7 +136,7 @@ export class OperationsRepository {
     return rows.map(toOperation);
   }
 
-  async updateStatus(id: string, status: OperationStatus, errorCode: string | null = null): Promise<void> {
+  async updateStatus(id: string, status: OperationStatus, errorCode: OperationErrorCode | null = null): Promise<void> {
     assertUuid(id, 'operation');
     const nextStatus = assertStatus(status);
     const nextErrorCode = assertErrorCode(errorCode);

@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import TripsScreen from '../index';
 import TripScreen from '../[tripId]';
+import ConflictsScreen from '../conflicts';
 import { PackingRow } from '../../../src/components/PackingRow';
 import { useTrips } from '../../../src/trips/trips-context';
 
-jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useLocalSearchParams: () => ({ tripId: '22222222-2222-4222-8222-222222222222' }) }));
+const mockUseLocalSearchParams = jest.fn(() => ({ tripId: '22222222-2222-4222-8222-222222222222' }));
+const mockRouterBack = jest.fn();
+jest.mock('expo-router', () => ({ router: { push: jest.fn(), back: mockRouterBack }, useLocalSearchParams: () => mockUseLocalSearchParams() }));
+jest.mock('expo-network', () => ({ addNetworkStateListener: () => ({ remove: jest.fn() }) }));
 jest.mock('../../../src/trips/trips-context', () => ({ useTrips: jest.fn() }));
 const tripId = '22222222-2222-4222-8222-222222222222';
 const summary = { tripId, name: 'Synthetic ridge trip', destination: 'North Loop', startsOn: '2026-07-01', endsOn: '2026-07-03', status: 'planned' as const };
@@ -14,16 +18,26 @@ const refreshTrips = jest.fn<() => Promise<typeof summary[]>>();
 const getDownloadedTrips = jest.fn<() => Promise<typeof downloaded[]>>();
 const downloadTrip = jest.fn<(id: string) => Promise<typeof downloaded>>();
 const getPackingSnapshot = jest.fn<(id: string) => Promise<typeof downloaded | null>>();
-const setPacked = jest.fn<(tripId: string, entryId: string, packed: boolean) => Promise<void>>();
+const setPacked = jest.fn<(tripId: string, entryId: string, packed: boolean) => Promise<any>>();
+const syncPendingOperations = jest.fn<() => Promise<any>>();
+const listOperations = jest.fn<() => Promise<any[]>>();
+const resolveConflict = jest.fn<(id: string, resolution: 'keep_server' | 'apply_local') => Promise<void>>();
+const discardOperation = jest.fn<(id: string) => Promise<void>>();
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockUseLocalSearchParams.mockReset();
+  mockUseLocalSearchParams.mockReturnValue({ tripId: '22222222-2222-4222-8222-222222222222' });
   refreshTrips.mockResolvedValue([]);
   getDownloadedTrips.mockResolvedValue([]);
   downloadTrip.mockResolvedValue(downloaded);
   getPackingSnapshot.mockResolvedValue(downloaded);
-  setPacked.mockResolvedValue(undefined);
-  (useTrips as jest.MockedFunction<typeof useTrips>).mockReturnValue({ refreshTrips, getDownloadedTrips, downloadTrip, getPackingSnapshot, setPacked } as never);
+  setPacked.mockResolvedValue({ id: '55555555-5555-4555-8555-555555555555', memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', tripId, entryId: '12', packed: true, baseVersion: 3, status: 'pending', createdAt: '2026-06-30T12:00:00.000Z', errorCode: null });
+  syncPendingOperations.mockResolvedValue({ synced: 0, conflicts: 0, needsAttention: 0, paused: false });
+  listOperations.mockResolvedValue([]);
+  resolveConflict.mockResolvedValue(undefined);
+  discardOperation.mockResolvedValue(undefined);
+  (useTrips as jest.MockedFunction<typeof useTrips>).mockReturnValue({ refreshTrips, getDownloadedTrips, downloadTrip, getPackingSnapshot, setPacked, syncPendingOperations, listOperations, resolveConflict, discardOperation } as never);
 });
 
 describe('trip screens', () => {
@@ -105,6 +119,29 @@ describe('trip screens', () => {
     const checkbox = await screen.findByRole('switch', { name: /Synthetic stove/i });
     await act(async () => { fireEvent(checkbox, 'valueChange', true); });
     expect(setPacked).toHaveBeenCalledWith(tripId, '12', true);
+    expect(await screen.findByText('Pending sync · Packed')).toBeTruthy();
+  });
+
+  it.each([
+    ['Keep server', 'keep_server'],
+    ['Apply my value', 'apply_local'],
+  ] as const)('shows the server/local values and applies explicit %s resolution', async (label, resolution) => {
+    const conflict = { id: '55555555-5555-4555-8555-555555555555', memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', tripId, entryId: '12', packed: true, baseVersion: 3, status: 'conflict' as const, createdAt: '2026-06-30T12:00:00.000Z', errorCode: 'version_conflict' };
+    mockUseLocalSearchParams.mockReturnValue({ operationId: conflict.id } as never);
+    listOperations.mockResolvedValueOnce([conflict]);
+    await render(<ConflictsScreen />);
+    expect(await screen.findByText('Not packed')).toBeTruthy();
+    expect(screen.getByText('Packed')).toBeTruthy();
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: label === 'Keep server' ? 'Keep server value' : label })); });
+    expect(resolveConflict).toHaveBeenCalledWith(conflict.id, resolution);
+  });
+
+  it('shows an explicit attention state and discard action for unsyncable operations', async () => {
+    listOperations.mockResolvedValueOnce([{ id: '55555555-5555-4555-8555-555555555555', memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', tripId, entryId: '12', packed: true, baseVersion: 3, status: 'needs_attention', createdAt: '2026-06-30T12:00:00.000Z', errorCode: 'not_found' }]);
+    await render(<TripScreen />);
+    expect(await screen.findByText(/Needs attention · This item is unavailable or access may have changed/)).toBeTruthy();
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'Discard unsyncable packing change' })); });
+    expect(discardOperation).toHaveBeenCalledWith('55555555-5555-4555-8555-555555555555');
   });
 
   it('shows stale/offline state and does not offer edits when no local snapshot exists', async () => {

@@ -6,7 +6,7 @@ import TripCaptureFixture from '../trip-capture-fixture';
 declare const require: (id: string) => { readFileSync(path: string, encoding: string): string };
 const fs = require('fs');
 
-const validStates = ['online', 'progress', 'downloaded', 'error', 'empty', 'loading', 'packing'] as const;
+const validStates = ['online', 'progress', 'downloaded', 'error', 'empty', 'loading', 'packing', 'pending', 'conflict', 'attention'] as const;
 let mockRouteState = 'online';
 
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ state: mockRouteState }) }));

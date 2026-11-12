@@ -7,6 +7,10 @@ interface ApiOptions {
   fetcher?: typeof fetch; refresh: () => Promise<MemberSession>;
 }
 export interface Household { id: string; name: string }
+const STABLE_ERROR_CODES = ['invalid_request', 'unauthorized', 'not_found', 'version_conflict', 'trip_read_only', 'idempotency_key_reused', 'operation_in_progress'] as const;
+export type StableApiErrorCode = (typeof STABLE_ERROR_CODES)[number];
+export type ApiErrorCode = StableApiErrorCode | 'network_error';
+export class ApiError extends Error { constructor(message: string, readonly code: ApiErrorCode, readonly status: number, readonly details: Record<string, unknown> = {}) { super(message); this.name = 'ApiError'; } }
 const secureTokens = new TokenStore(SecureStore);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function origin(url: string): URL {
@@ -30,7 +34,10 @@ export class ApiClient {
     if (!session) throw new Error('Unauthorized: sign in required');
     const method = (init.method ?? 'GET').toUpperCase();
     const url = new URL(`/api/mobile/v1${path.startsWith('/') ? path : `/${path}`}`, this.base);
-    const send = (accessToken: string) => this.fetcher(url, { ...init, method, headers: { ...Object.fromEntries(new Headers(init.headers).entries()), Authorization: `Bearer ${accessToken}` } });
+    const send = async (accessToken: string) => {
+      try { return await this.fetcher(url, { ...init, method, headers: { ...Object.fromEntries(new Headers(init.headers).entries()), Authorization: `Bearer ${accessToken}` } }); }
+      catch (cause) { throw new ApiError(cause instanceof Error ? cause.message : 'Network request failed', 'network_error', 0); }
+    };
     let response = await send(session.accessToken);
     if (response.status === 401 && method === 'GET') {
       const updated = await this.options.refresh();
@@ -38,9 +45,29 @@ export class ApiClient {
       await this.sessionStore.save(updated);
       response = await send(updated.accessToken);
     }
-    if (response.status === 401) throw new Error('Unauthorized');
-    if (!response.ok) throw new Error(`CampKit API request failed (${response.status})`);
+    if (response.status === 401) throw new ApiError('Unauthorized', 'unauthorized', 401);
+    if (!response.ok) {
+      let body: unknown = null;
+      try { body = await response.json(); } catch { /* non-JSON framework errors stay unmapped */ }
+      const envelope = body && typeof body === 'object' ? (body as { error?: unknown }).error : null;
+      if (envelope && typeof envelope === 'object') {
+        const error = envelope as Record<string, unknown>;
+        if (typeof error.code === 'string' && STABLE_ERROR_CODES.includes(error.code as StableApiErrorCode)) throw new ApiError(typeof error.message === 'string' ? error.message : 'CampKit API request failed', error.code as StableApiErrorCode, response.status, error);
+      }
+      throw new Error(`CampKit API request failed (${response.status})`);
+    }
     return response;
+  }
+  async setPackedState(tripId: string, entryId: string, input: { packed: boolean; baseVersion: number; clientOperationId: string }): Promise<{ entryId: string; packed: boolean; version: number; clientOperationId: string }> {
+    const householdId = await this.selectedHousehold();
+    if (!householdId || !UUID.test(householdId)) throw new Error('Select a household before syncing packing');
+    if (!UUID.test(tripId)) throw new Error('Invalid trip ID');
+    if (!/^([1-9][0-9]*)$/.test(entryId)) throw new Error('Invalid packing entry ID');
+    if (typeof input.packed !== 'boolean' || !Number.isInteger(input.baseVersion) || input.baseVersion < 1 || !UUID.test(input.clientOperationId)) throw new Error('Invalid packing operation');
+    const response = await this.request(`/households/${householdId}/trips/${tripId}/packing/${entryId}/`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packed: input.packed, client_operation_id: input.clientOperationId, base_version: input.baseVersion }) });
+    const body = await response.json() as Record<string, unknown>;
+    if (body.entry_id !== entryId || body.packed !== input.packed || !Number.isInteger(body.version) || (body.version as number) < 1 || body.client_operation_id !== input.clientOperationId) throw new Error('Invalid packing acknowledgement');
+    return { entryId, packed: input.packed, version: body.version as number, clientOperationId: input.clientOperationId };
   }
   async listHouseholds(): Promise<Household[]> {
     const response = await this.request('/households/');

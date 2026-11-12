@@ -149,6 +149,9 @@ describe('trip snapshots', () => {
     await trips.saveSnapshot(snapshot({ packing: [{ entryId: '12', label: 'Synthetic stove', quantity: 1, packed: false, version: 3 }] }));
     await expect(trips.setPacked(TRIP, '12', true)).resolves.toBeUndefined();
     expect((await trips.getSnapshot(TRIP))?.packing).toEqual([{ entryId: '12', label: 'Synthetic stove', quantity: 1, packed: true, version: 3 }]);
+    await expect(trips.updatePacking(TRIP, '12', false, 4)).resolves.toBeUndefined();
+    expect((await trips.getSnapshot(TRIP))?.packing[0]).toMatchObject({ packed: false, version: 4 });
+    await expect(trips.updatePacking(TRIP, '12', true, 0)).rejects.toThrow(/version/i);
     await expect(trips.setPacked(TRIP_B, '12', false)).rejects.toThrow(/downloaded trip/i);
     await expect(trips.setPacked(TRIP, '0', false)).rejects.toThrow(/entry/i);
   });
@@ -269,6 +272,7 @@ describe('pending operations', () => {
     await operations.enqueue(operation());
 
     await expect(operations.updateStatus(OPERATION, 'sent' as never)).rejects.toThrow(/status/i);
+    await expect(operations.updateStatus(OPERATION, 'needs_attention', 'unknown_backend_code' as never)).rejects.toThrow(/error code/i);
     expect(await operations.get(OPERATION)).toMatchObject({ status: 'pending' });
 
     await operations.updateStatus(OPERATION, 'conflict');

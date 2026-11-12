@@ -12,12 +12,19 @@ function setup() {
   const repository = {
     saveSnapshot: jest.fn<(input: any) => Promise<TripSnapshot>>(async () => stored),
     listSnapshots: jest.fn<() => Promise<any[]>>(async () => []),
-    getSnapshot: jest.fn<(id: string) => Promise<TripSnapshot | null>>(async () => null),
+    getSnapshot: jest.fn<(id: string) => Promise<TripSnapshot | null>>(async () => stored),
     setPacked: jest.fn<(trip: string, entry: string, packed: boolean) => Promise<void>>(async () => {}),
+    updatePacking: jest.fn<(trip: string, entry: string, packed: boolean, version: number) => Promise<void>>(async () => {}),
   };
-  const api = { listTrips: jest.fn<() => Promise<any[]>>(async () => [trip]), getPackingSnapshot: jest.fn<(id: string) => Promise<any>>(async () => snapshot) };
-  const service = new TripsService({ api, householdId: async () => '11111111-1111-4111-8111-111111111111', repository: async () => repository });
-  return { service, api, repository };
+  const queue: any[] = [];
+  const operations = {
+    enqueue: jest.fn(async (input: any) => { const value = { ...input, memberId: 'member-a', householdId: '11111111-1111-4111-8111-111111111111', createdAt: '2026-06-30T12:00:00.000Z', errorCode: null }; queue.push(value); return value; }),
+    list: jest.fn(async () => queue), get: jest.fn(async (id: string) => queue.find((item) => item.id === id) ?? null),
+    updateStatus: jest.fn(async () => {}), remove: jest.fn(async (id: string) => { const at = queue.findIndex((item) => item.id === id); if (at >= 0) queue.splice(at, 1); return at >= 0; }),
+  };
+  const api = { listTrips: jest.fn<() => Promise<any[]>>(async () => [trip]), getPackingSnapshot: jest.fn<(id: string) => Promise<any>>(async () => snapshot), setPackedState: jest.fn(async (_trip: string, entry: string, input: any) => ({ entryId: entry, packed: input.packed, version: input.baseVersion + 1, clientOperationId: input.clientOperationId })) };
+  const service = new TripsService({ api, memberId: 'member-a', householdId: async () => '11111111-1111-4111-8111-111111111111', repository: async () => repository, operations: async () => operations as any });
+  return { service, api, repository, operations, queue };
 }
 
 describe('TripsService', () => {

@@ -1,6 +1,9 @@
 import { ApiClient } from '../api/http';
 import { AccountVault } from '../storage/account-vault';
-import { TripSnapshot, TripSnapshotSummary } from '../storage/trips-repository';
+import { TripSnapshot, TripSnapshotSummary, TripsRepository } from '../storage/trips-repository';
+import { OperationsRepository } from '../storage/operations-repository';
+import { SyncEngine } from '../sync/sync-engine';
+import { ConflictResolution } from '../sync/operation-types';
 
 export const TRIP_STATUSES = ['planned', 'confirmed', 'completed', 'cancelled'] as const;
 export type TripStatus = (typeof TRIP_STATUSES)[number];
@@ -17,16 +20,13 @@ interface TripsApi {
   listTrips(): Promise<unknown[]>;
   getPackingSnapshot(tripId: string): Promise<PackingSnapshotResponse>;
 }
-interface TripsRepository {
-  saveSnapshot(input: { tripId: string; name: string; destination: string | null; startsOn: string; endsOn: string; snapshotAt: string; version: number; packing: { entryId: string; label: string; quantity: number; packed: boolean; version: number }[] }): Promise<TripSnapshot>;
-  listSnapshots(): Promise<TripSnapshotSummary[]>;
-  getSnapshot(tripId: string): Promise<TripSnapshot | null>;
-  setPacked(tripId: string, entryId: string, packed: boolean): Promise<void>;
-}
+interface TripsRepositoryContract extends Pick<TripsRepository, 'saveSnapshot' | 'listSnapshots' | 'getSnapshot' | 'setPacked' | 'updatePacking'> {}
 interface TripsServiceOptions {
-  api: Pick<TripsApi, 'listTrips' | 'getPackingSnapshot'>;
+  api: Pick<TripsApi, 'listTrips' | 'getPackingSnapshot'> & Pick<ApiClient, 'setPackedState'>;
   householdId: () => Promise<string | null>;
-  repository: (householdId: string) => Promise<TripsRepository>;
+  repository: (householdId: string) => Promise<TripsRepositoryContract>;
+  operations: (householdId: string) => Promise<OperationsRepository>;
+  memberId: string;
   now?: () => Date;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -63,10 +63,17 @@ function parseSnapshot(value: unknown, summary: TripSummary, snapshotAt: string)
 /** Coordinates online trip reads with atomically persisted offline snapshots. */
 export class TripsService {
   constructor(private readonly options: TripsServiceOptions) {}
-  private async getRepository() {
+  private async getHouseholdId() {
     const householdId = await this.options.householdId();
     if (!householdId) throw new Error('Select a household before opening trips');
-    return this.options.repository(householdId);
+    return householdId;
+  }
+  private async getRepository() { return this.options.repository(await this.getHouseholdId()); }
+  private async getSyncEngine() {
+    const householdId = await this.getHouseholdId();
+    const operations = await this.options.operations(householdId);
+    const trips = await this.options.repository(householdId);
+    return new SyncEngine({ memberId: this.options.memberId, householdId, operations, trips, transport: (op) => this.options.api.setPackedState(op.tripId, op.entryId, { packed: op.packed, baseVersion: op.baseVersion, clientOperationId: op.id }) });
   }
   async refreshTrips(): Promise<TripSummary[]> {
     const rows = await this.options.api.listTrips();
@@ -87,12 +94,21 @@ export class TripsService {
   async getPackingSnapshot(tripId: string) { return (await this.getRepository()).getSnapshot(tripId); }
   async setPacked(tripId: string, entryId: string, packed: boolean) {
     if (typeof packed !== 'boolean') throw new Error('Packed state must be boolean');
-    await (await this.getRepository()).setPacked(tripId, entryId, packed);
+    return (await this.getSyncEngine()).setPackedState(tripId, entryId, packed);
+  }
+  async syncPendingOperations() { return (await this.getSyncEngine()).syncPendingOperations(); }
+  async listOperations() { return (await this.options.operations(await this.getHouseholdId())).list(); }
+  async resolveConflict(operationId: string, resolution: ConflictResolution) { return (await this.getSyncEngine()).resolveConflict(operationId, resolution); }
+  async discardOperation(operationId: string) {
+    const operation = await (await this.options.operations(await this.getHouseholdId())).get(operationId);
+    if (!operation || operation.memberId !== this.options.memberId) throw new Error('Operation is not available in this account');
+    if (operation.status !== 'needs_attention') throw new Error('Only operations needing attention can be discarded');
+    await (await this.options.operations(await this.getHouseholdId())).remove(operationId);
   }
 }
 
 const vault = new AccountVault();
 export function createTripsService(api: ApiClient, memberId: string, householdId: () => Promise<string | null>): TripsService {
-  return new TripsService({ api, householdId, repository: async (household) => (await vault.openAccount(memberId, household)).trips as unknown as TripsRepository });
+  return new TripsService({ api, memberId, householdId, repository: async (household) => (await vault.openAccount(memberId, household)).trips, operations: async (household) => (await vault.openAccount(memberId, household)).operations });
 }
 export async function clearTripsForSignOut(memberId: string) { await vault.clearAccount(memberId); }

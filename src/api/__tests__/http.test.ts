@@ -61,6 +61,27 @@ describe('ApiClient', () => {
     await expect(api.getPackingSnapshot('22222222-2222-4222-8222-222222222222')).rejects.toThrow(/packing snapshot response/i);
   });
 
+  it('writes packing with the exact versioned idempotency request and exposes stable backend errors', async () => {
+    const api = new ApiClient({ baseUrl: 'https://campkit.lan', sessionStore, selectionStore, fetcher: fetcher as typeof fetch, refresh: async () => memberA });
+    const householdId = '11111111-1111-4111-8111-111111111111';
+    const tripId = '22222222-2222-4222-8222-222222222222';
+    await api.selectHousehold(householdId);
+    fetcher.mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ entry_id: '12', packed: true, version: 4, client_operation_id: '55555555-5555-4555-8555-555555555555' }) } as Response);
+    await expect(api.setPackedState(tripId, '12', { packed: true, baseVersion: 3, clientOperationId: '55555555-5555-4555-8555-555555555555' })).resolves.toEqual({ entryId: '12', packed: true, version: 4, clientOperationId: '55555555-5555-4555-8555-555555555555' });
+    expect(String(fetcher.mock.calls.at(-1)?.[0])).toBe(`https://campkit.lan/api/mobile/v1/households/${householdId}/trips/${tripId}/packing/12/`);
+    expect(fetcher.mock.calls.at(-1)?.[1]).toMatchObject({ method: 'PUT', body: JSON.stringify({ packed: true, client_operation_id: '55555555-5555-4555-8555-555555555555', base_version: 3 }) });
+    fetcher.mockResolvedValueOnce({ status: 404, ok: false, json: async () => ({ error: { code: 'not_found', message: 'missing' } }) } as Response);
+    await expect(api.setPackedState(tripId, '12', { packed: true, baseVersion: 3, clientOperationId: '55555555-5555-4555-8555-555555555555' })).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    fetcher.mockResolvedValueOnce({ status: 409, ok: false, json: async () => ({ error: { code: 'unlisted_backend_detail', message: 'internal detail' } }) } as Response);
+    await expect(api.setPackedState(tripId, '12', { packed: true, baseVersion: 3, clientOperationId: '55555555-5555-4555-8555-555555555555' })).rejects.toThrow('CampKit API request failed (409)');
+    fetcher.mockRejectedValueOnce(new TypeError('offline'));
+    await expect(api.setPackedState(tripId, '12', { packed: true, baseVersion: 3, clientOperationId: '55555555-5555-4555-8555-555555555555' })).rejects.toMatchObject({ code: 'network_error' });
+    await expect(api.setPackedState(tripId, '12', { packed: 'yes' as never, baseVersion: 3, clientOperationId: '55555555-5555-4555-8555-555555555555' })).rejects.toThrow(/invalid packing operation/i);
+    await expect(api.setPackedState(tripId, '12', { packed: false, baseVersion: 0, clientOperationId: '55555555-5555-4555-8555-555555555555' })).rejects.toThrow(/invalid packing operation/i);
+    await expect(api.setPackedState(tripId, 'x', { packed: false, baseVersion: 1, clientOperationId: '55555555-5555-4555-8555-555555555555' })).rejects.toThrow(/entry ID/i);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
   it('keeps household selection scoped to the signed-in member', async () => {
     const api = new ApiClient({ baseUrl: 'https://campkit.lan', sessionStore, selectionStore, fetcher: fetcher as typeof fetch, refresh: async () => memberA });
     await api.selectHousehold('11111111-1111-4111-8111-111111111111');

@@ -222,6 +222,20 @@ export class TripsRepository {
     if (result.changes === 0) throw new Error('Packing row is not available in a downloaded trip');
   }
 
+  /** Updates acknowledged server state and version for an existing cached row. */
+  async updatePacking(tripId: string, entryId: string, packed: boolean, version: number): Promise<void> {
+    assertUuid(tripId, 'trip');
+    assertPackingEntryId(entryId);
+    if (typeof packed !== 'boolean') throw new Error('Invalid packed state for stored trip');
+    if (!Number.isInteger(version) || version < 1) throw new Error('Invalid packing row version');
+    const result = await this.database.run(
+      `UPDATE packing_entries SET packed = ?, version = ?
+       WHERE member_id = ? AND household_id = ? AND trip_id = ? AND entry_id = ?`,
+      [packed ? 1 : 0, version, this.database.memberId, this.database.householdId, tripId, entryId],
+    );
+    if (result.changes === 0) throw new Error('Packing row is not available in a downloaded trip');
+  }
+
   async deleteSnapshot(tripId: string): Promise<boolean> {
     assertUuid(tripId, 'trip');
     const { memberId, householdId } = this.database;
